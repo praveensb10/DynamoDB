@@ -266,7 +266,7 @@ You'll see the command menu. Now run the use case demos.
 
 ---
 
-## Use Case Demos (4 Use Cases)
+## Use Case Demos (5 Use Cases)
 
 ### Use Case 1: Distributed Storage with Replication
 
@@ -475,6 +475,19 @@ DEADLOCK DETECTED AND RESOLVED using DAG algorithm!
 ```
 
 **What this proves:** Created a circular resource dependency. The Wait-For Graph tracked all wait edges. DFS found the cycle `[1→2→1]`. Resolved by aborting one transaction. System continued normally without freezing.
+
+---
+### Use Case 5: Quorum Read with Read Repair
+
+1. Store a value on any node, e.g. `put 1 myfile testfiles/test.txt`.
+2. Force one replica to become stale by writing a different value directly (or by editing its in-memory data in code).
+3. Run `quorum-get myfile` from the client. The client will:
+   - Contact two nodes in the cluster.
+   - Compare their Lamport timestamps and pick the newest value.
+   - If one node has an older or missing value, it will automatically repair that node by issuing a `Put`.
+4. The freshest data is saved locally (`myfile_downloaded.txt`) and both nodes are now consistent.
+
+This demonstrates DynamoDB’s R/W/N model with **R=2** (read from two replicas) and simple **read repair** built on top of the existing `Get`/`Put` RPCs.
 
 ---
 

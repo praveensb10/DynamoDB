@@ -64,6 +64,8 @@ func main() {
 			handlePut(parts)
 		case "get":
 			handleGet(parts)
+		case "quorum-get":
+			handleQuorumGet(parts)
 		case "delete":
 			handleDelete(parts)
 		case "status":
@@ -225,6 +227,105 @@ func handleGet(parts []string) {
 	} else {
 		fmt.Printf("NOT FOUND: %s\n", reply.Message)
 	}
+}
+
+// handleQuorumGet implements a simple quorum read (R=2, N=3) with read repair.
+// It contacts two nodes, chooses the version with the latest timestamp, and
+// optionally repairs stale or missing replicas by writing the freshest value
+// back to them.
+func handleQuorumGet(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: quorum-get <key>")
+		fmt.Println("Example: quorum-get myfile")
+		return
+	}
+
+	key := parts[1]
+
+	// pick first two nodes from config (assumes at least 2 nodes)
+	if len(config.Nodes) < 2 {
+		fmt.Println("Quorum read requires at least two nodes in config")
+		return
+	}
+	nodeIDs := []int{config.Nodes[0].ID, config.Nodes[1].ID}
+
+	replies := make([]node.GetReply, 2)
+	founds := make([]bool, 2)
+
+	for i, nid := range nodeIDs {
+		client, err := connectToNode(nid)
+		if err != nil {
+			fmt.Printf("Cannot connect to Node %d: %v\n", nid, err)
+			return
+		}
+		args := &node.GetArgs{Key: key}
+		var reply node.GetReply
+		err = client.Call("Node.Get", args, &reply)
+		client.Close()
+		if err != nil {
+			fmt.Printf("RPC Error from Node %d: %v\n", nid, err)
+			return
+		}
+		replies[i] = reply
+		founds[i] = reply.Found
+	}
+
+	var selected node.GetReply
+	var selectedNode int
+	if founds[0] && founds[1] {
+		if replies[0].Timestamp >= replies[1].Timestamp {
+			selected = replies[0]
+			selectedNode = nodeIDs[0]
+		} else {
+			selected = replies[1]
+			selectedNode = nodeIDs[1]
+		}
+	} else if founds[0] {
+		selected = replies[0]
+		selectedNode = nodeIDs[0]
+	} else if founds[1] {
+		selected = replies[1]
+		selectedNode = nodeIDs[1]
+	} else {
+		fmt.Println("NOT FOUND on any quorum node")
+		return
+	}
+
+	// perform read repair on stale/missing replicas
+	for i, nid := range nodeIDs {
+		if !founds[i] || replies[i].Timestamp < selected.Timestamp {
+			fmt.Printf("Read-repairing Node %d (older/missing)\n", nid)
+			client, err := connectToNode(nid)
+			if err != nil {
+				fmt.Printf("Cannot connect for repair to Node %d: %v\n", nid, err)
+				continue
+			}
+			putArgs := &node.PutArgs{
+				Key:       key,
+				Value:     selected.Value,
+				Timestamp: selected.Timestamp,
+				IsReplica: false, // allow replication for simplicity
+			}
+			var putReply node.PutReply
+			err = client.Call("Node.Put", putArgs, &putReply)
+			client.Close()
+			if err != nil {
+				fmt.Printf("Repair PUT to Node %d failed: %v\n", nid, err)
+			} else {
+				fmt.Printf("Repaired Node %d to timestamp %d\n", nid, selected.Timestamp)
+			}
+		}
+	}
+
+	// output the chosen value just like handleGet
+	outputFile := key + "_downloaded.txt"
+	err := os.WriteFile(outputFile, selected.Value, 0644)
+	if err != nil {
+		fmt.Printf("Cannot save file: %v\n", err)
+		return
+	}
+	fmt.Printf("SUCCESS: Downloaded freshest version from Node %d to '%s' (%d bytes)\n", selectedNode, outputFile, len(selected.Value))
+	fmt.Printf("Content preview: %s\n", string(selected.Value[:min(len(selected.Value), 200)]))
 }
 
 func min(a, b int) int {
