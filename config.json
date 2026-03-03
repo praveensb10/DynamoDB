@@ -1,0 +1,22 @@
+{
+    "nodes": [
+        {
+            "id": 1,
+            "ip": "127.0.0.1",
+            "port": 8001
+        },
+        {
+            "id": 2,
+            "ip": "127.0.0.1",
+            "port": 8002
+        },
+        {
+            "id": 3,
+            "ip": "127.0.0.1",
+            "port": 8003
+        }
+    ],
+    "heartbeat_interval_ms": 3000,
+    "election_timeout_ms": 5000,
+    "deadlock_timeout_ms": 5000
+}
