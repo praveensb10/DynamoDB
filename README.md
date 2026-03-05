@@ -9,7 +9,9 @@ This project implements a **simplified DynamoDB-style distributed database from 
 - Data is **automatically replicated** to all nodes when stored (default) or partitioned via consistent hashing (optional)
 - One node is elected as **leader** using Bully Algorithm
 - **Mutual Exclusion** ensures only one node writes at a time (Ricart-Agrawala)
-- **Deadlock Detection** uses a Wait-For Graph (DAG) with DFS cycle detection
+- **Deadlock Detection & Resolution** uses a Wait-For Graph (DAG) with DFS cycle detection.
+  - Features decoupled steps for **Creation**, **Detection**, and **Resolution**.
+  - Includes a real-world scenario (Alice & Bob) for demonstration.
 - All communication happens via **GoRPC** (Go's built-in RPC)
 - **Optional: Data Partitioning** with consistent hashing for scalability
 
@@ -111,7 +113,11 @@ dynamo-go/
 │                               - partition-info: query partition ownership
 │                               - status/list: cluster monitoring
 │                               - mutex-put: Ricart-Agrawala protected write
-│                               - deadlock-test: full DAG demo scenario
+- deadlock-scenario: Alice & Bob Shared Document scenario (Circular Wait)
+- deadlock-create: Low-level command to create a deadlock manually
+- deadlock-detect: Manually trigger cycle detection
+- deadlock-resolve: Manually abort a node to break the cycle
+- deadlock-show: Visualize the current Wait-For Graph
 │
 └── testfiles/
     ├── test.txt             # "Hello, this is a test file..." (for put/get demo)
@@ -492,7 +498,36 @@ DEADLOCK DETECTED AND RESOLVED using DAG algorithm!
 **What this proves:** Created a circular resource dependency. The Wait-For Graph tracked all wait edges. DFS found the cycle `[1→2→1]`. Resolved by aborting one transaction. System continued normally without freezing.
 
 ---
-### Use Case 5: Quorum Read with Read Repair
+
+### Use Case 5: Alice & Bob - Shared Document Deadlock
+
+**What we demonstrate:** A realistic "Persons accessing docs" scenario where two people wait for each other's documents forever.
+
+**Context:**
+- **Person 1 (Alice)** is on Node 1.
+- **Person 2 (Bob)** is on Node 2.
+- They both need two documents to finish their project: **WorkReport.doc** and **Budget.doc**.
+
+**Command:**
+```
+> deadlock-scenario
+```
+
+**Step-by-Step Breakdown:**
+1. **Alice** (Node 1) starts working on `WorkReport.doc` (Locks it).
+2. **Bob** (Node 2) starts working on `Budget.doc` (Locks it).
+3. **Alice** tries to open `Budget.doc` to check some numbers. (She **waits** for Bob).
+4. **Bob** tries to open `WorkReport.doc` to paste his budget into the report. (He **waits** for Alice).
+5. **Deadlock!** Alice is waiting for Bob, and Bob is waiting for Alice.
+6. **System Detection:** The coordinator node runs cycle detection and finds: `Node 1 → Node 2 → Node 1`.
+7. **System Resolution:** To save the project, the system **aborts Bob's access**.
+8. **Result:** Alice can now finish the `WorkReport.doc`, and Bob can retry his task later.
+
+**Why this is better:** Instead of just "Resource A and B", we use descriptive names that show how deadlocks happen in real world applications like shared document editing or distributed databases.
+
+---
+---
+### Use Case 6: Quorum Read with Read Repair
 
 1. Store a value on any node, e.g. `put 1 myfile testfiles/test.txt`.
 2. Force one replica to become stale by writing a different value directly (or by editing its in-memory data in code).

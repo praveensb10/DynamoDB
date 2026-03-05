@@ -39,7 +39,12 @@ func main() {
 	fmt.Println("  status <node_id>                - Show specific node status")
 	fmt.Println("  list <node_id>                  - List keys on node")
 	fmt.Println("  mutex-put <key> <filename>      - Put with mutual exclusion")
-	fmt.Println("  deadlock-test <resource>         - Test DAG deadlock detection")
+	fmt.Println("  deadlock-test <resource>        - Test DAG deadlock detection (Full Auto)")
+	fmt.Println("  deadlock-create <resource>      - Step 1: Create a deadlock")
+	fmt.Println("  deadlock-detect                 - Step 2: Detect cycle in graph")
+	fmt.Println("  deadlock-resolve <node_id>       - Step 3: Resolve deadlock")
+	fmt.Println("  deadlock-show                   - Step 4: Show current graph")
+	fmt.Println("  deadlock-scenario               - Step 5: Shared Document Scenario (Alice & Bob)")
 	fmt.Println("  help                            - Show this help")
 	fmt.Println("  exit                            - Quit")
 	fmt.Println("")
@@ -79,6 +84,16 @@ func main() {
 			handleMutexPut(parts)
 		case "deadlock-test":
 			handleDeadlockTest(parts)
+		case "deadlock-create":
+			handleDeadlockCreate(parts)
+		case "deadlock-detect":
+			handleDeadlockDetect(parts)
+		case "deadlock-resolve":
+			handleDeadlockResolve(parts)
+		case "deadlock-show":
+			handleDeadlockShow(parts)
+		case "deadlock-scenario":
+			handleDeadlockScenario(parts)
 		case "help":
 			printHelp()
 		case "exit", "quit":
@@ -782,6 +797,171 @@ func handleDeadlockTest(parts []string) {
 	fmt.Println("")
 	fmt.Println("DEADLOCK DETECTED AND RESOLVED using DAG algorithm!")
 	fmt.Println("====================================")
+}
+
+func handleDeadlockCreate(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: deadlock-create <resource_name>")
+		return
+	}
+
+	resource := parts[1]
+	resourceA := resource + "_A"
+	resourceB := resource + "_B"
+
+	leaderID, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	fmt.Printf("Coordinator: Node %d\n", leaderID)
+	leaderClient.Call("Node.DAGReset", &node.DAGResetArgs{}, &node.DAGResetReply{})
+
+	fmt.Println("--- Creating Deadlock ---")
+	// Part 1: Initial locks
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceA}, &node.DAGLockReply{})
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceB}, &node.DAGLockReply{})
+
+	// Part 2: Wait edges
+	var reply node.DAGLockReply
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceB}, &reply)
+	fmt.Printf("Node 1 waiting for Node %d on %s\n", reply.WaitingFor, resourceB)
+
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceA}, &reply)
+	fmt.Printf("Node 2 waiting for Node %d on %s\n", reply.WaitingFor, resourceA)
+
+	fmt.Println("Deadlock scenario created (Circular Wait: 1->2->1)")
+}
+
+func handleDeadlockDetect(parts []string) {
+	leaderID, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	fmt.Printf("Coordinator: Node %d\n", leaderID)
+	var reply node.DAGDetectReply
+	err := leaderClient.Call("Node.DAGDetect", &node.DAGDetectArgs{}, &reply)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Result: %s\n", reply.Message)
+	if reply.HasCycle {
+		fmt.Printf("DEADLOCK DETECTED! Cycle: %v\n", reply.Cycle)
+	}
+}
+
+func handleDeadlockResolve(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: deadlock-resolve <node_id>")
+		return
+	}
+
+	nodeID, _ := strconv.Atoi(parts[1])
+
+	leaderID, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	fmt.Printf("Coordinator: Node %d\n", leaderID)
+	var reply node.DAGResolveReply
+	leaderClient.Call("Node.DAGResolve", &node.DAGResolveArgs{AbortNodeID: nodeID}, &reply)
+	fmt.Printf("Result: %s\n", reply.Message)
+}
+
+func handleDeadlockScenario(parts []string) {
+	fmt.Println("====================================")
+	fmt.Println("  SCENARIO: SHARED DOCUMENT ACCESS")
+	fmt.Println("  Persons: Alice (Node 1), Bob (Node 2)")
+	fmt.Println("  Documents: WorkReport.doc, Budget.doc")
+	fmt.Println("====================================")
+	fmt.Println("")
+
+	leaderID, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("Error: No leader (coordinator) found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	fmt.Printf("Coordinator: Node %d\n", leaderID)
+	leaderClient.Call("Node.DAGReset", &node.DAGResetArgs{}, &node.DAGResetReply{})
+
+	// Step 1: Alice locks WorkReport.doc
+	fmt.Println("\n--- Step 1: Alice (Node 1) accesses 'WorkReport.doc' ---")
+	var reply node.DAGLockReply
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: "WorkReport.doc"}, &reply)
+	fmt.Printf("Result: %s\n", reply.Message)
+	time.Sleep(1 * time.Second)
+
+	// Step 2: Bob locks Budget.doc
+	fmt.Println("\n--- Step 2: Bob (Node 2) accesses 'Budget.doc' ---")
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: "Budget.doc"}, &reply)
+	fmt.Printf("Result: %s\n", reply.Message)
+	time.Sleep(1 * time.Second)
+
+	// Step 3: Alice tries to access Budget.doc (held by Bob)
+	fmt.Println("\n--- Step 3: Alice (Node 1) wants to read 'Budget.doc' (held by Bob) ---")
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: "Budget.doc"}, &reply)
+	fmt.Printf("Result: %s\n", reply.Message)
+	if !reply.Granted {
+		fmt.Printf("WAIT: Alice is now waiting for Bob (Node %d)\n", reply.WaitingFor)
+	}
+	time.Sleep(1 * time.Second)
+
+	// Step 4: Bob tries to access WorkReport.doc (held by Alice)
+	fmt.Println("\n--- Step 4: Bob (Node 2) wants to edit 'WorkReport.doc' (held by Alice) ---")
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: "WorkReport.doc"}, &reply)
+	fmt.Printf("Result: %s\n", reply.Message)
+	if !reply.Granted {
+		fmt.Printf("WAIT: Bob is now waiting for Alice (Node %d)\n", reply.WaitingFor)
+	}
+	time.Sleep(1 * time.Second)
+
+	fmt.Println("\n--- CURRENT WAIT-FOR GRAPH ---")
+	showDAGGraph(leaderClient)
+
+	// Step 5: Detect Deadlock
+	fmt.Println("\n--- Step 5: Detecting Deadlock ---")
+	var detectReply node.DAGDetectReply
+	leaderClient.Call("Node.DAGDetect", &node.DAGDetectArgs{}, &detectReply)
+	fmt.Printf("Result: %s\n", detectReply.Message)
+	if detectReply.HasCycle {
+		fmt.Printf("DEADLOCK CONFIRMED: Cycle %v found!\n", detectReply.Cycle)
+		fmt.Println("Alice -> Bob -> Alice")
+	}
+	time.Sleep(1 * time.Second)
+
+	// Step 6: Resolve Deadlock
+	fmt.Println("\n--- Step 6: Resolving Deadlock ---")
+	fmt.Println("Action: Aborting Bob's (Node 2) access to resolve the cycle")
+	var resolveReply node.DAGResolveReply
+	leaderClient.Call("Node.DAGResolve", &node.DAGResolveArgs{AbortNodeID: 2}, &resolveReply)
+	fmt.Printf("Result: %s\n", resolveReply.Message)
+
+	fmt.Println("\n--- FINAL WAIT-FOR GRAPH ---")
+	showDAGGraph(leaderClient)
+	fmt.Println("\nDeadlock resolved. Alice can now proceed with her work.")
+	fmt.Println("====================================")
+}
+
+func handleDeadlockShow(parts []string) {
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+	showDAGGraph(leaderClient)
 }
 
 func showDAGGraph(client *rpc.Client) {
