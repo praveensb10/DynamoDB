@@ -252,3 +252,27 @@ func (ra *RicartAgrawala) ExecuteInCriticalSection(fn func()) bool {
 	
 	return true
 }
+
+// RequestOnly requests critical section but does NOT auto-execute anything.
+// Used for manual step-by-step mutex demo.
+// Returns true if CS was granted (node can now write).
+func (ra *RicartAgrawala) RequestOnly() bool {
+	granted := ra.RequestCriticalSection()
+	if granted {
+		ra.Node.MutexLock.Lock()
+		ra.Node.InCriticalSection = true
+		ra.Node.MutexLock.Unlock()
+		fmt.Printf("[Node %d] CRITICAL SECTION ACQUIRED (manual mode) — ready for writes\n", ra.Node.ID)
+	}
+	return granted
+}
+
+// ManualRelease releases the critical section (manual mode).
+func (ra *RicartAgrawala) ManualRelease() {
+	ra.Node.MutexLock.Lock()
+	ra.Node.InCriticalSection = false
+	ra.Node.MutexLock.Unlock()
+	ra.ReleaseCriticalSection()
+	fmt.Printf("[Node %d] CRITICAL SECTION RELEASED (manual mode)\n", ra.Node.ID)
+}
+
