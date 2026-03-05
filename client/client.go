@@ -28,26 +28,41 @@ func main() {
 
 	fmt.Println("====================================")
 	fmt.Println("   DISTRIBUTED SYSTEM CLIENT")
+	fmt.Println("   DynamoDB-style Key-Value Store")
 	fmt.Println("====================================")
 	fmt.Println("")
-	fmt.Println("Commands:")
-	fmt.Println("  put <node_id> <key> <filename>  - Store file (replicated)")
-	fmt.Println("  get <node_id> <key>             - Retrieve file")
-	fmt.Println("  delete <node_id> <key>          - Delete key")
-	fmt.Println("  partition-info <node_id> <key>  - Show partition ownership")
-	fmt.Println("  status                          - Show all nodes status")
-	fmt.Println("  status <node_id>                - Show specific node status")
-	fmt.Println("  list <node_id>                  - List keys on node")
-	fmt.Println("  mutex-put <key> <filename>      - Put with mutual exclusion")
-	fmt.Println("  deadlock-test <resource>        - Test DAG deadlock detection (Full Auto)")
-	fmt.Println("  deadlock-create <resource>      - Step 1: Create a deadlock")
-	fmt.Println("  deadlock-detect                 - Step 2: Detect cycle in graph")
-	fmt.Println("  deadlock-resolve <node_id>       - Step 3: Resolve deadlock")
-	fmt.Println("  deadlock-show                   - Step 4: Show current graph")
-	fmt.Println("  deadlock-scenario               - Step 5: Shared Document Scenario (Alice & Bob)")
-	fmt.Println("  help                            - Show this help")
-	fmt.Println("  exit                            - Quit")
+	fmt.Println("Basic Operations:")
+	fmt.Println("  put <node_id> <key> <filename>     - Store file (replicated)")
+	fmt.Println("  get <node_id> <key>                - Retrieve file")
+	fmt.Println("  delete <node_id> <key>             - Delete key")
+	fmt.Println("  list <node_id>                     - List keys on node")
+	fmt.Println("  status                             - Show all nodes status")
+	fmt.Println("  status <node_id>                   - Show specific node")
+	fmt.Println("  partition-info <node_id> <key>     - Show partition ownership")
+	fmt.Println("  quorum-get <key>                   - Quorum read + read-repair")
 	fmt.Println("")
+	fmt.Println("Mutual Exclusion (Auto):")
+	fmt.Println("  mutex-put <key> <filename>         - Full auto Ricart-Agrawala")
+	fmt.Println("")
+	fmt.Println("Mutual Exclusion (Manual Step-by-Step):")
+	fmt.Println("  mutex-request <node_id>            - Step 1: Request CS")
+	fmt.Println("  mutex-write <node_id> <key> <file> - Step 2: Write inside CS")
+	fmt.Println("  mutex-release <node_id>            - Step 3: Release CS")
+	fmt.Println("")
+	fmt.Println("Deadlock (Auto):")
+	fmt.Println("  deadlock-test <resource>           - Full auto deadlock demo")
+	fmt.Println("  deadlock-scenario                  - Alice & Bob scenario")
+	fmt.Println("")
+	fmt.Println("Deadlock (Manual Step-by-Step):")
+	fmt.Println("  deadlock-reset                     - Clear all DAG state")
+	fmt.Println("  deadlock-lock <node_id> <resource> - Lock a resource")
+	fmt.Println("  deadlock-unlock <node_id> <res>    - Unlock a resource")
+	fmt.Println("  deadlock-show                      - Show Wait-For Graph")
+	fmt.Println("  deadlock-detect                    - Run cycle detection")
+	fmt.Println("  deadlock-resolve <node_id>         - Abort node to resolve")
+	fmt.Println("")
+	fmt.Println("Other:")
+	fmt.Println("  help  - Show commands    exit  - Quit")
 	fmt.Println("====================================")
 	fmt.Println("")
 
@@ -80,20 +95,37 @@ func main() {
 			handleList(parts)
 		case "partition-info":
 			handlePartitionInfo(parts)
+		// Auto mutex
 		case "mutex-put":
 			handleMutexPut(parts)
+		// Manual mutex
+		case "mutex-request":
+			handleMutexRequest(parts)
+		case "mutex-write":
+			handleMutexWrite(parts)
+		case "mutex-release":
+			handleMutexRelease(parts)
+		// Auto deadlock
 		case "deadlock-test":
 			handleDeadlockTest(parts)
-		case "deadlock-create":
-			handleDeadlockCreate(parts)
+		case "deadlock-scenario":
+			handleDeadlockScenario(parts)
+		// Manual deadlock
+		case "deadlock-reset":
+			handleDeadlockReset(parts)
+		case "deadlock-lock":
+			handleDeadlockLock(parts)
+		case "deadlock-unlock":
+			handleDeadlockUnlock(parts)
+		case "deadlock-show":
+			handleDeadlockShow(parts)
 		case "deadlock-detect":
 			handleDeadlockDetect(parts)
 		case "deadlock-resolve":
 			handleDeadlockResolve(parts)
-		case "deadlock-show":
-			handleDeadlockShow(parts)
-		case "deadlock-scenario":
-			handleDeadlockScenario(parts)
+		// Legacy (keep for compatibility)
+		case "deadlock-create":
+			handleDeadlockCreate(parts)
 		case "help":
 			printHelp()
 		case "exit", "quit":
@@ -144,6 +176,8 @@ func findLeader() (int, *rpc.Client) {
 	}
 	return -1, nil
 }
+
+// ===== Basic Operations =====
 
 func handlePut(parts []string) {
 	if len(parts) < 4 {
@@ -247,10 +281,6 @@ func handleGet(parts []string) {
 	}
 }
 
-// handleQuorumGet implements a simple quorum read (R=2, N=3) with read repair.
-// It contacts two nodes, chooses the version with the latest timestamp, and
-// optionally repairs stale or missing replicas by writing the freshest value
-// back to them.
 func handleQuorumGet(parts []string) {
 	if len(parts) < 2 {
 		fmt.Println("Usage: quorum-get <key>")
@@ -535,11 +565,12 @@ func handlePartitionInfo(parts []string) {
 	fmt.Println("====================================")
 }
 
-// handleMutexPut - REAL mutual exclusion using Ricart-Agrawala via RPC
+// ===== Auto Mutex (Ricart-Agrawala) =====
+
 func handleMutexPut(parts []string) {
 	if len(parts) < 3 {
 		fmt.Println("Usage: mutex-put <key> <filename>")
-		fmt.Println("This stores data using mutual exclusion (Ricart-Agrawala)")
+		fmt.Println("This stores data using mutual exclusion (Ricart-Agrawala) — FULLY AUTO")
 		fmt.Println("Example: mutex-put sharedfile testfiles/data1.txt")
 		return
 	}
@@ -554,7 +585,7 @@ func handleMutexPut(parts []string) {
 	}
 
 	fmt.Println("====================================")
-	fmt.Println("  MUTUAL EXCLUSION WRITE")
+	fmt.Println("  MUTUAL EXCLUSION WRITE (AUTO)")
 	fmt.Println("  Algorithm: Ricart-Agrawala")
 	fmt.Println("====================================")
 	fmt.Printf("Key: %s\n", key)
@@ -573,7 +604,6 @@ func handleMutexPut(parts []string) {
 	fmt.Println("Sending MutexPut request (Ricart-Agrawala will run on server)...")
 	fmt.Println("")
 
-	// Call MutexPut on the leader - this triggers REAL Ricart-Agrawala on the server
 	args := &node.MutexPutArgs{
 		Key:       key,
 		Value:     data,
@@ -606,11 +636,177 @@ func handleMutexPut(parts []string) {
 	fmt.Println("====================================")
 }
 
-// handleDeadlockTest - REAL DAG deadlock detection via RPC
+// ===== Manual Mutex (Step-by-Step Ricart-Agrawala) =====
+
+func handleMutexRequest(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: mutex-request <node_id>")
+		fmt.Println("Step 1: Request Critical Section from all other nodes")
+		fmt.Println("Example: mutex-request 4")
+		return
+	}
+
+	nodeID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Println("Invalid node ID")
+		return
+	}
+
+	client, err := connectToNode(nodeID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer client.Close()
+
+	fmt.Println("====================================")
+	fmt.Println("  STEP 1: REQUEST CRITICAL SECTION")
+	fmt.Println("  Algorithm: Ricart-Agrawala")
+	fmt.Println("====================================")
+	fmt.Printf("Node %d sending CS REQUEST to all other nodes...\n", nodeID)
+	fmt.Println("Each node will GRANT or DEFER based on Lamport timestamps:")
+	fmt.Println("  - GRANT: if not requesting CS, or requesting with higher timestamp")
+	fmt.Println("  - DEFER: if requesting CS with lower timestamp (higher priority)")
+	fmt.Println("")
+
+	args := &node.MutexRequestArgs{
+		Timestamp: time.Now().UnixNano(),
+	}
+	var reply node.MutexRequestReply
+
+	err = client.Call("Node.MutexRequest", args, &reply)
+	if err != nil {
+		fmt.Printf("RPC Error: %v\n", err)
+		return
+	}
+
+	if reply.Success {
+		fmt.Println("✓ " + reply.Message)
+		fmt.Println("")
+		fmt.Println("Next steps:")
+		fmt.Printf("  mutex-write %d <key> <filename>  — write data inside CS\n", nodeID)
+		fmt.Printf("  mutex-release %d                 — release CS when done\n", nodeID)
+	} else {
+		fmt.Println("✗ " + reply.Message)
+	}
+	fmt.Println("====================================")
+}
+
+func handleMutexWrite(parts []string) {
+	if len(parts) < 4 {
+		fmt.Println("Usage: mutex-write <node_id> <key> <filename>")
+		fmt.Println("Step 2: Write data while inside Critical Section")
+		fmt.Println("Example: mutex-write 4 sharedfile testfiles/data1.txt")
+		return
+	}
+
+	nodeID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Println("Invalid node ID")
+		return
+	}
+
+	key := parts[2]
+	filename := parts[3]
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Printf("Cannot read file '%s': %v\n", filename, err)
+		return
+	}
+
+	client, err := connectToNode(nodeID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer client.Close()
+
+	fmt.Println("====================================")
+	fmt.Println("  STEP 2: WRITE INSIDE CRITICAL SECTION")
+	fmt.Println("====================================")
+	fmt.Printf("Writing key '%s' from file '%s' (%d bytes) on Node %d...\n", key, filename, len(data), nodeID)
+	fmt.Println("")
+
+	args := &node.MutexWriteArgs{
+		Key:       key,
+		Value:     data,
+		Timestamp: time.Now().UnixNano(),
+	}
+	var reply node.MutexWriteReply
+
+	err = client.Call("Node.MutexWrite", args, &reply)
+	if err != nil {
+		fmt.Printf("RPC Error: %v\n", err)
+		return
+	}
+
+	if reply.Success {
+		fmt.Println("✓ " + reply.Message)
+		fmt.Println("")
+		fmt.Println("Data written & replicated while other nodes are BLOCKED from writing.")
+		fmt.Printf("Next: mutex-release %d\n", nodeID)
+	} else {
+		fmt.Println("✗ " + reply.Message)
+	}
+	fmt.Println("====================================")
+}
+
+func handleMutexRelease(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: mutex-release <node_id>")
+		fmt.Println("Step 3: Release Critical Section and send deferred replies")
+		fmt.Println("Example: mutex-release 4")
+		return
+	}
+
+	nodeID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Println("Invalid node ID")
+		return
+	}
+
+	client, err := connectToNode(nodeID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer client.Close()
+
+	fmt.Println("====================================")
+	fmt.Println("  STEP 3: RELEASE CRITICAL SECTION")
+	fmt.Println("====================================")
+
+	args := &node.MutexReleaseArgs{
+		Timestamp: time.Now().UnixNano(),
+	}
+	var reply node.MutexReleaseReply
+
+	err = client.Call("Node.MutexRelease", args, &reply)
+	if err != nil {
+		fmt.Printf("RPC Error: %v\n", err)
+		return
+	}
+
+	if reply.Success {
+		fmt.Println("✓ " + reply.Message)
+		fmt.Println("")
+		fmt.Println("What happened:")
+		fmt.Println("  1. Critical Section released")
+		fmt.Println("  2. All deferred REPLY messages sent to waiting nodes")
+		fmt.Println("  3. Other nodes can now enter CS")
+	} else {
+		fmt.Println("✗ " + reply.Message)
+	}
+	fmt.Println("====================================")
+}
+
+// ===== Auto Deadlock Test =====
+
 func handleDeadlockTest(parts []string) {
 	if len(parts) < 2 {
 		fmt.Println("Usage: deadlock-test <resource_name>")
-		fmt.Println("This tests DAG (Wait-For Graph) deadlock detection")
+		fmt.Println("This tests DAG (Wait-For Graph) deadlock detection — FULLY AUTO")
 		fmt.Println("Example: deadlock-test shared_resource")
 		return
 	}
@@ -620,7 +816,7 @@ func handleDeadlockTest(parts []string) {
 	resourceB := resource + "_B"
 
 	fmt.Println("====================================")
-	fmt.Println("  DAG DEADLOCK DETECTION TEST")
+	fmt.Println("  DAG DEADLOCK DETECTION TEST (AUTO)")
 	fmt.Println("  Algorithm: Wait-For Graph (DAG)")
 	fmt.Println("====================================")
 	fmt.Println("")
@@ -799,85 +995,6 @@ func handleDeadlockTest(parts []string) {
 	fmt.Println("====================================")
 }
 
-func handleDeadlockCreate(parts []string) {
-	if len(parts) < 2 {
-		fmt.Println("Usage: deadlock-create <resource_name>")
-		return
-	}
-
-	resource := parts[1]
-	resourceA := resource + "_A"
-	resourceB := resource + "_B"
-
-	leaderID, leaderClient := findLeader()
-	if leaderClient == nil {
-		fmt.Println("No leader found.")
-		return
-	}
-	defer leaderClient.Close()
-
-	fmt.Printf("Coordinator: Node %d\n", leaderID)
-	leaderClient.Call("Node.DAGReset", &node.DAGResetArgs{}, &node.DAGResetReply{})
-
-	fmt.Println("--- Creating Deadlock ---")
-	// Part 1: Initial locks
-	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceA}, &node.DAGLockReply{})
-	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceB}, &node.DAGLockReply{})
-
-	// Part 2: Wait edges
-	var reply node.DAGLockReply
-	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceB}, &reply)
-	fmt.Printf("Node 1 waiting for Node %d on %s\n", reply.WaitingFor, resourceB)
-
-	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceA}, &reply)
-	fmt.Printf("Node 2 waiting for Node %d on %s\n", reply.WaitingFor, resourceA)
-
-	fmt.Println("Deadlock scenario created (Circular Wait: 1->2->1)")
-}
-
-func handleDeadlockDetect(parts []string) {
-	leaderID, leaderClient := findLeader()
-	if leaderClient == nil {
-		fmt.Println("No leader found.")
-		return
-	}
-	defer leaderClient.Close()
-
-	fmt.Printf("Coordinator: Node %d\n", leaderID)
-	var reply node.DAGDetectReply
-	err := leaderClient.Call("Node.DAGDetect", &node.DAGDetectArgs{}, &reply)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Result: %s\n", reply.Message)
-	if reply.HasCycle {
-		fmt.Printf("DEADLOCK DETECTED! Cycle: %v\n", reply.Cycle)
-	}
-}
-
-func handleDeadlockResolve(parts []string) {
-	if len(parts) < 2 {
-		fmt.Println("Usage: deadlock-resolve <node_id>")
-		return
-	}
-
-	nodeID, _ := strconv.Atoi(parts[1])
-
-	leaderID, leaderClient := findLeader()
-	if leaderClient == nil {
-		fmt.Println("No leader found.")
-		return
-	}
-	defer leaderClient.Close()
-
-	fmt.Printf("Coordinator: Node %d\n", leaderID)
-	var reply node.DAGResolveReply
-	leaderClient.Call("Node.DAGResolve", &node.DAGResolveArgs{AbortNodeID: nodeID}, &reply)
-	fmt.Printf("Result: %s\n", reply.Message)
-}
-
 func handleDeadlockScenario(parts []string) {
 	fmt.Println("====================================")
 	fmt.Println("  SCENARIO: SHARED DOCUMENT ACCESS")
@@ -954,6 +1071,84 @@ func handleDeadlockScenario(parts []string) {
 	fmt.Println("====================================")
 }
 
+// ===== Manual Deadlock Commands =====
+
+func handleDeadlockReset(parts []string) {
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	leaderClient.Call("Node.DAGReset", &node.DAGResetArgs{}, &node.DAGResetReply{})
+	fmt.Println("✓ DAG state cleared. Wait-For Graph is now empty.")
+}
+
+func handleDeadlockLock(parts []string) {
+	if len(parts) < 3 {
+		fmt.Println("Usage: deadlock-lock <node_id> <resource>")
+		fmt.Println("Example: deadlock-lock 1 file_A")
+		return
+	}
+
+	nodeID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Println("Invalid node ID")
+		return
+	}
+	resource := parts[2]
+
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	args := &node.DAGLockArgs{NodeID: nodeID, Resource: resource}
+	var reply node.DAGLockReply
+	err = leaderClient.Call("Node.DAGLock", args, &reply)
+	if err != nil {
+		fmt.Printf("RPC Error: %v\n", err)
+		return
+	}
+
+	if reply.Granted {
+		fmt.Printf("✓ Resource '%s' GRANTED to Node %d\n", resource, nodeID)
+	} else {
+		fmt.Printf("✗ Node %d must WAIT — resource '%s' held by Node %d\n", nodeID, resource, reply.WaitingFor)
+		fmt.Printf("  Wait-For edge added: Node %d → Node %d\n", nodeID, reply.WaitingFor)
+	}
+}
+
+func handleDeadlockUnlock(parts []string) {
+	if len(parts) < 3 {
+		fmt.Println("Usage: deadlock-unlock <node_id> <resource>")
+		fmt.Println("Example: deadlock-unlock 1 file_A")
+		return
+	}
+
+	nodeID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		fmt.Println("Invalid node ID")
+		return
+	}
+	resource := parts[2]
+
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	args := &node.DAGUnlockArgs{NodeID: nodeID, Resource: resource}
+	var reply node.DAGUnlockReply
+	leaderClient.Call("Node.DAGUnlock", args, &reply)
+	fmt.Printf("✓ Resource '%s' RELEASED by Node %d\n", resource, nodeID)
+}
+
 func handleDeadlockShow(parts []string) {
 	_, leaderClient := findLeader()
 	if leaderClient == nil {
@@ -961,8 +1156,95 @@ func handleDeadlockShow(parts []string) {
 		return
 	}
 	defer leaderClient.Close()
+
+	fmt.Println("====================================")
+	fmt.Println("  WAIT-FOR GRAPH (DAG)")
+	fmt.Println("====================================")
 	showDAGGraph(leaderClient)
+	fmt.Println("====================================")
 }
+
+func handleDeadlockDetect(parts []string) {
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	fmt.Println("Running DFS cycle detection on Wait-For Graph...")
+	var reply node.DAGDetectReply
+	err := leaderClient.Call("Node.DAGDetect", &node.DAGDetectArgs{}, &reply)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	if reply.HasCycle {
+		fmt.Printf("🔴 DEADLOCK DETECTED! Cycle: %v\n", reply.Cycle)
+		fmt.Println("Use 'deadlock-resolve <node_id>' to break the cycle")
+	} else {
+		fmt.Println("🟢 No deadlock detected (no cycles in Wait-For Graph)")
+	}
+}
+
+func handleDeadlockResolve(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: deadlock-resolve <node_id>")
+		fmt.Println("Aborts the specified node's transactions to break the deadlock")
+		return
+	}
+
+	nodeID, _ := strconv.Atoi(parts[1])
+
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	var reply node.DAGResolveReply
+	leaderClient.Call("Node.DAGResolve", &node.DAGResolveArgs{AbortNodeID: nodeID}, &reply)
+	fmt.Printf("✓ %s\n", reply.Message)
+	fmt.Println("Deadlock resolved. Run 'deadlock-detect' to verify.")
+}
+
+// Legacy: deadlock-create (kept for compatibility)
+func handleDeadlockCreate(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: deadlock-create <resource_name>")
+		return
+	}
+
+	resource := parts[1]
+	resourceA := resource + "_A"
+	resourceB := resource + "_B"
+
+	_, leaderClient := findLeader()
+	if leaderClient == nil {
+		fmt.Println("No leader found.")
+		return
+	}
+	defer leaderClient.Close()
+
+	leaderClient.Call("Node.DAGReset", &node.DAGResetArgs{}, &node.DAGResetReply{})
+
+	fmt.Println("--- Creating Deadlock ---")
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceA}, &node.DAGLockReply{})
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceB}, &node.DAGLockReply{})
+
+	var reply node.DAGLockReply
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 1, Resource: resourceB}, &reply)
+	fmt.Printf("Node 1 waiting for Node %d on %s\n", reply.WaitingFor, resourceB)
+
+	leaderClient.Call("Node.DAGLock", &node.DAGLockArgs{NodeID: 2, Resource: resourceA}, &reply)
+	fmt.Printf("Node 2 waiting for Node %d on %s\n", reply.WaitingFor, resourceA)
+
+	fmt.Println("Deadlock scenario created (Circular Wait: 1->2->1)")
+}
+
+// ===== Helper Functions =====
 
 func showDAGGraph(client *rpc.Client) {
 	graphArgs := &node.DAGGraphArgs{}
@@ -1000,38 +1282,30 @@ func printHelp() {
 	fmt.Println("====================================")
 	fmt.Println("")
 	fmt.Println("Basic Operations:")
-	fmt.Println("  put <node_id> <key> <filename>")
-	fmt.Println("      Store a file (auto-replicates to all nodes)")
+	fmt.Println("  put <node_id> <key> <filename>     - Store file (auto-replicates)")
+	fmt.Println("  get <node_id> <key>                - Retrieve file from any node")
+	fmt.Println("  delete <node_id> <key>             - Delete key (propagates)")
+	fmt.Println("  list <node_id>                     - List all keys on node")
+	fmt.Println("  status                             - Show all nodes status")
+	fmt.Println("  status <node_id>                   - Show specific node")
+	fmt.Println("  partition-info <node_id> <key>     - Show partition ownership")
+	fmt.Println("  quorum-get <key>                   - Quorum read + read-repair")
 	fmt.Println("")
-	fmt.Println("  get <node_id> <key>")
-	fmt.Println("      Retrieve a file from any node")
+	fmt.Println("Mutual Exclusion (Ricart-Agrawala):")
+	fmt.Println("  mutex-put <key> <filename>         - FULL AUTO: request CS → write → release")
+	fmt.Println("  mutex-request <node_id>            - MANUAL Step 1: Request CS")
+	fmt.Println("  mutex-write <node_id> <key> <file> - MANUAL Step 2: Write inside CS")
+	fmt.Println("  mutex-release <node_id>            - MANUAL Step 3: Release CS")
 	fmt.Println("")
-	fmt.Println("  delete <node_id> <key>")
-	fmt.Println("      Delete a key from specific node")
-	fmt.Println("")
-	fmt.Println("Status:")
-	fmt.Println("  status")
-	fmt.Println("      Show status of all nodes")
-	fmt.Println("")
-	fmt.Println("  status <node_id>")
-	fmt.Println("      Show status of specific node")
-	fmt.Println("")
-	fmt.Println("  list <node_id>")
-	fmt.Println("      List all keys on specific node")
-	fmt.Println("")
-	fmt.Println("Partitioning:")
-	fmt.Println("  partition-info <node_id> <key>")
-	fmt.Println("      Show partition ownership info for a key")
-	fmt.Println("      (shows which nodes store this key)")
-	fmt.Println("")
-	fmt.Println("Advanced (Algorithms Demo):")
-	fmt.Println("  mutex-put <key> <filename>")
-	fmt.Println("      Store with mutual exclusion (Ricart-Agrawala)")
-	fmt.Println("      Requests critical section from all nodes before writing")
-	fmt.Println("")
-	fmt.Println("  deadlock-test <resource>")
-	fmt.Println("      Test DAG deadlock detection (Wait-For Graph)")
-	fmt.Println("      Creates circular dependency, detects cycle, resolves")
+	fmt.Println("Deadlock Detection (DAG Wait-For Graph):")
+	fmt.Println("  deadlock-test <resource>           - FULL AUTO: create → detect → resolve")
+	fmt.Println("  deadlock-scenario                  - FULL AUTO: Alice & Bob scenario")
+	fmt.Println("  deadlock-reset                     - MANUAL: Clear all DAG state")
+	fmt.Println("  deadlock-lock <node_id> <resource> - MANUAL: Lock a resource")
+	fmt.Println("  deadlock-unlock <node_id> <res>    - MANUAL: Unlock a resource")
+	fmt.Println("  deadlock-show                      - MANUAL: Show Wait-For Graph")
+	fmt.Println("  deadlock-detect                    - MANUAL: Run cycle detection")
+	fmt.Println("  deadlock-resolve <node_id>         - MANUAL: Abort node's transactions")
 	fmt.Println("")
 	fmt.Println("Other:")
 	fmt.Println("  help    - Show this help")
