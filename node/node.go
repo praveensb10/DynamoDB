@@ -39,6 +39,8 @@ type StoredItem struct {
 // MutexManager interface for mutual exclusion (Ricart-Agrawala)
 type MutexManager interface {
 	ExecuteInCriticalSection(fn func()) bool
+	RequestOnly() bool
+	ManualRelease()
 }
 
 // DeadlockDetector interface for DAG-based deadlock detection
@@ -52,6 +54,12 @@ type DeadlockDetector interface {
 	GetLogs() []string
 	ClearLogs()
 	Reset()
+}
+
+// ElectionManager interface for leader election
+type ElectionManager interface {
+	TriggerElection()
+	AnnounceLeadershipTo(nodeID int)
 }
 
 // Node represents a single node in the distributed system
@@ -80,9 +88,13 @@ type Node struct {
 	MutexLock     sync.Mutex
 	CSChan        chan bool
 
+	// Manual Critical Section tracking
+	InCriticalSection bool
+
 	// Managers (set from main.go to avoid circular imports)
 	MutexMgr     MutexManager
 	DeadlockMgr  DeadlockDetector
+	ElectionMgr  ElectionManager
 	PartitionMgr *partition.PartitionManager
 }
 
@@ -118,17 +130,15 @@ func NewNode(id int, config *Config) *Node {
 		}
 	}
 
-	// Create partition manager based on config
 	partitionConfig := config.Partition
 	if partitionConfig.ReplicationFactor == 0 {
-		partitionConfig.ReplicationFactor = 3 // Default to 3
+		partitionConfig.ReplicationFactor = 3
 	}
 	partitionMgr := partition.NewPartitionManager(
 		partitionConfig.Enabled,
 		partitionConfig.ReplicationFactor,
 	)
 
-	// Initialize all nodes in the partition ring
 	for _, nc := range config.Nodes {
 		partitionMgr.AddNode(nc.ID)
 	}
