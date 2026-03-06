@@ -290,36 +290,82 @@ func handleQuorumGet(parts []string) {
 
 	key := parts[1]
 
-	// pick first two nodes from config (assumes at least 2 nodes)
-	if len(config.Nodes) < 2 {
-		fmt.Println("Quorum read requires at least two nodes in config")
+	//Connect to ANY node to find actual owners
+	// (any node can answer this since all have same ring)
+	client, err := connectToNode(config.Nodes[0].ID)
+	if err != nil {
+		fmt.Printf("Cannot connect to get partition info: %v\n", err)
 		return
 	}
-	nodeIDs := []int{config.Nodes[0].ID, config.Nodes[1].ID}
 
-	replies := make([]node.GetReply, 2)
-	founds := make([]bool, 2)
+	//Ask who actually OWNS this key
+	partArgs := &node.PartitionInfoArgs{Key: key}
+	var partReply node.PartitionInfoReply
+	err = client.Call("Node.GetPartitionInfo", partArgs, &partReply)
+	client.Close()
+	if err != nil {
+		fmt.Printf("Cannot get partition info: %v\n", err)
+		return
+	}
 
+	// partReply.Owners = [Node2, Node4, Node1] (actual owners)
+	if len(partReply.Owners) == 0 {
+		fmt.Println("No owners found for this key")
+		return
+	}
+
+	//Read from first 2 ACTUAL OWNERS
+	// R = 2 from the real owners
+	readCount := 2
+	if len(partReply.Owners) < 2 {
+		readCount = len(partReply.Owners)
+	}
+	nodeIDs := partReply.Owners[:readCount]
+	// nodeIDs = [Node2, Node4] ← actual owners!
+
+	fmt.Printf("Key '%s' owned by nodes: %v\n", key, partReply.Owners)
+	fmt.Printf("Reading from nodes: %v (R=%d)\n", nodeIDs, readCount)
+
+	replies := make([]node.GetReply, readCount)
+	founds := make([]bool, readCount)
+
+	//Try next owner if a node fails (fallback)
 	for i, nid := range nodeIDs {
 		client, err := connectToNode(nid)
 		if err != nil {
-			fmt.Printf("Cannot connect to Node %d: %v\n", nid, err)
-			return
+			fmt.Printf("Node %d unreachable, trying next owner...\n", nid)
+
+			//Try next owner instead of giving up!
+			if len(partReply.Owners) > readCount {
+				fallbackNode := partReply.Owners[readCount]
+				fmt.Printf("Falling back to Node %d\n", fallbackNode)
+				client, err = connectToNode(fallbackNode)
+				if err != nil {
+					fmt.Printf("Fallback Node %d also unreachable\n", fallbackNode)
+					continue
+				}
+				nodeIDs[i] = fallbackNode // update to fallback node
+			} else {
+				continue // no more owners to try
+			}
 		}
+
 		args := &node.GetArgs{Key: key}
 		var reply node.GetReply
 		err = client.Call("Node.Get", args, &reply)
 		client.Close()
 		if err != nil {
 			fmt.Printf("RPC Error from Node %d: %v\n", nid, err)
-			return
+			continue
 		}
 		replies[i] = reply
 		founds[i] = reply.Found
 	}
 
+	//Same timestamp comparison
 	var selected node.GetReply
 	var selectedNode int
+
 	if founds[0] && founds[1] {
 		if replies[0].Timestamp >= replies[1].Timestamp {
 			selected = replies[0]
@@ -339,43 +385,40 @@ func handleQuorumGet(parts []string) {
 		return
 	}
 
-	// perform read repair on stale/missing replicas
+	//Read repair on actual owners (not random nodes)
 	for i, nid := range nodeIDs {
 		if !founds[i] || replies[i].Timestamp < selected.Timestamp {
 			fmt.Printf("Read-repairing Node %d (older/missing)\n", nid)
 			client, err := connectToNode(nid)
 			if err != nil {
-				fmt.Printf("Cannot connect for repair to Node %d: %v\n", nid, err)
+				fmt.Printf("Cannot connect for repair to Node %d\n", nid)
 				continue
 			}
 			putArgs := &node.PutArgs{
 				Key:       key,
 				Value:     selected.Value,
 				Timestamp: selected.Timestamp,
-				IsReplica: false, // allow replication for simplicity
+				IsReplica: true, //IsReplica=true to prevent re-replication
 			}
 			var putReply node.PutReply
-			err = client.Call("Node.Put", putArgs, &putReply)
+			client.Call("Node.Put", putArgs, &putReply)
 			client.Close()
-			if err != nil {
-				fmt.Printf("Repair PUT to Node %d failed: %v\n", nid, err)
-			} else {
-				fmt.Printf("Repaired Node %d to timestamp %d\n", nid, selected.Timestamp)
-			}
+			fmt.Printf("Repaired Node %d to timestamp %d\n", nid, selected.Timestamp)
 		}
 	}
 
-	// output the chosen value just like handleGet
+	// Save and return result
 	outputFile := key + "_downloaded.txt"
-	err := os.WriteFile(outputFile, selected.Value, 0644)
+	err = os.WriteFile(outputFile, selected.Value, 0644)
 	if err != nil {
 		fmt.Printf("Cannot save file: %v\n", err)
 		return
 	}
-	fmt.Printf("SUCCESS: Downloaded freshest version from Node %d to '%s' (%d bytes)\n", selectedNode, outputFile, len(selected.Value))
-	fmt.Printf("Content preview: %s\n", string(selected.Value[:min(len(selected.Value), 200)]))
+	fmt.Printf("SUCCESS: Downloaded freshest version from Node %d\n", selectedNode)
+	fmt.Printf("Saved to '%s' (%d bytes)\n", outputFile, len(selected.Value))
+	fmt.Printf("Content preview: %s\n",
+		string(selected.Value[:min(len(selected.Value), 200)]))
 }
-
 func min(a, b int) int {
 	if a < b {
 		return a
